@@ -1,0 +1,19 @@
+@prefix bot: <https://w3id.org/bot#> .
+@prefix ex: <https://example.org/building/> .
+@prefix props: <https://w3id.org/props#> .
+
+ex:Building_A a bot:Building ;
+    props:name "Office Building" .
+
+ex:Storey_1 a bot:Storey ;
+    props:name "Ground Floor" .
+
+ex:Wall_101 a bot:Element ;
+    props:name "External Wall 101" ;
+    props:height "3.0" ;
+    props:material "Concrete" .
+
+ex:Door_201 a bot:Element ;
+    props:name "Door 201" ;
+    props:fireRating "EI30" .
+

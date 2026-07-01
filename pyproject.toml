@@ -1,0 +1,15 @@
+[project]
+name = "lbd-diff"
+version = "0.1.0"
+description = "Desktop diff viewer for Linked Building Data Turtle files"
+requires-python = ">=3.10"
+dependencies = [
+    "rdflib>=7.0",
+]
+
+[project.scripts]
+lbd-diff = "lbd_diff.app:main"
+
+[tool.setuptools.packages.find]
+include = ["lbd_diff*"]
+
