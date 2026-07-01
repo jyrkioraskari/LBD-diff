@@ -1,6 +1,6 @@
 # LBD Diff
 
-LBD Diff is a small Python desktop application for comparing two Linked Building Data Turtle files.
+LBD Diff is a small Python desktop application for comparing two Linked Building Data Turtle files. Can compare models that have different OPM levels.
 
 <img src="Screen.png" alt="LBD Diff screenshot" width="400">
 
