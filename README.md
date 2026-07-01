@@ -9,7 +9,7 @@ It loads two `.ttl` files, parses them as RDF graphs, and presents the model dif
 - resources present in both files with changed triples
 - added and removed predicate/object values for each changed resource
 
-![LBD Diff screenshot](screen.png)
+![LBD Diff screenshot](Screen.png)
 
 ## Requirements
 
