@@ -1,6 +1,10 @@
-# LBD Diff
+# LBD Change Inspector 
 
-LBD Diff is a small Python desktop application for comparing two Linked Building Data Turtle files.
+LBD Diff is a small Python desktop application for comparing two Linked Building Data Turtle files. Can compare models that have different OPM levels.
+
+The tool performs a graph‑level diff between two Linked Building Data (LBD) Turtle datasets, detecting added, removed, and modified triples, while focusing on meaningful changes by ignoring irrelevant timestamps and unifying variant URIs and equivalent structures.
+
+<img src="Screen.png" alt="LBD Diff screenshot" width="400">
 
 It loads two `.ttl` files, parses them as RDF graphs, and presents the model differences in a tree view:
 
@@ -8,8 +12,6 @@ It loads two `.ttl` files, parses them as RDF graphs, and presents the model dif
 - resources only in the second file
 - resources present in both files with changed triples
 - added and removed predicate/object values for each changed resource
-
-![LBD Diff screenshot](screen.png)
 
 ## Requirements
 
