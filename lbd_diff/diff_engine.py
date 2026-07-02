@@ -6,7 +6,7 @@ from pathlib import Path
 
 from rdflib import Graph, URIRef
 from rdflib.namespace import OWL, RDF, RDFS, PROV
-from rdflib.term import Node
+from rdflib.term import Literal, Node
 
 IGNORED_PREDICATES = frozenset({PROV.generatedAtTime})
 URI_TIMESTAMP_SUFFIX = re.compile(r"p\d+$")
@@ -52,6 +52,22 @@ class ModelDiff:
     @property
     def has_changes(self) -> bool:
         return bool(self.added_resources or self.removed_resources or self.changed_resources)
+
+
+@dataclass(frozen=True)
+class CliParameterDiffGroup:
+    title: str
+    added_resources: tuple[ResourceDiff, ...]
+    removed_resources: tuple[ResourceDiff, ...]
+    changed_resources: tuple[ResourceDiff, ...]
+
+    @property
+    def has_changes(self) -> bool:
+        return bool(self.added_resources or self.removed_resources or self.changed_resources)
+
+    @property
+    def resource_count(self) -> int:
+        return len(self.added_resources) + len(self.removed_resources) + len(self.changed_resources)
 
 
 def load_turtle(path: str | Path) -> Graph:
@@ -125,6 +141,41 @@ def format_term(term: Node, graph: Graph | None = None) -> str:
 
 def predicate_value_text(item: PredicateValue, graph: Graph | None = None) -> str:
     return f"{format_term(item.predicate, graph)} -> {format_term(item.value, graph)}"
+
+
+def group_differences_by_cli_parameter(diff: ModelDiff) -> tuple[CliParameterDiffGroup, ...]:
+    grouped: dict[str, dict[str, list[ResourceDiff]]] = {
+        key: {"added": [], "removed": [], "changed": []} for key, _ in CLI_PARAMETER_GROUPS
+    }
+
+    for resource in diff.added_resources:
+        for key, split in _split_resource_by_cli_parameter(resource).items():
+            grouped[key]["added"].append(split)
+
+    for resource in diff.removed_resources:
+        for key, split in _split_resource_by_cli_parameter(resource).items():
+            grouped[key]["removed"].append(split)
+
+    for resource in diff.changed_resources:
+        for key, split in _split_resource_by_cli_parameter(resource).items():
+            if split.added and split.removed:
+                grouped[key]["changed"].append(split)
+            elif split.added:
+                grouped[key]["added"].append(split)
+            else:
+                grouped[key]["removed"].append(split)
+
+    groups = []
+    for key, title in CLI_PARAMETER_GROUPS:
+        group = CliParameterDiffGroup(
+            title=title,
+            added_resources=tuple(grouped[key]["added"]),
+            removed_resources=tuple(grouped[key]["removed"]),
+            changed_resources=tuple(grouped[key]["changed"]),
+        )
+        if group.has_changes:
+            groups.append(group)
+    return tuple(groups)
 
 
 def _subject_map(graph: Graph) -> dict[Node, set[PredicateValue]]:
@@ -263,3 +314,167 @@ def _sort_key(term: Node) -> str:
     if hasattr(term, "n3"):
         return term.n3()
     return str(term)
+
+
+CLI_PARAMETER_GROUPS = (
+    ("building_elements", "-be/--hasBuildingElements"),
+    ("building_properties", "-p/--hasBuildingElementProperties"),
+    ("opm_level", "-l/--level"),
+    ("blank_nodes", "-b/--hasBlankNodes"),
+    ("units", "--hasUnits"),
+    ("geometry", "--hasGeometry"),
+    ("wkt", "--hasWKT"),
+    ("geolocation", "--hasGeolocation"),
+    ("interfaces", "--hasInterfaces"),
+    ("ifcowl", "--ifcOWL"),
+    ("uri_base", "Others"),
+    ("hierarchical_naming", "--hasHierarchicalNaming"),
+    ("unattributed", "Other generated triples"),
+)
+
+BOT_NAMESPACE = "https://w3id.org/bot#"
+GEO_NAMESPACE = "http://www.opengis.net/ont/geosparql#"
+OMG_NAMESPACE = "https://w3id.org/omg#"
+FOG_NAMESPACE = "https://w3id.org/fog#"
+LBD_NAMESPACE = "https://lbd.org/#"
+IFCOWL_MARKERS = (
+    "ifcowl",
+    "buildingsmart.org/ifc",
+    "linkedbuildingdata.net/ifcowl",
+)
+
+
+def _split_resource_by_cli_parameter(resource: ResourceDiff) -> dict[str, ResourceDiff]:
+    buckets: dict[str, dict[str, set[PredicateValue]]] = {}
+
+    for item in resource.added:
+        key = _classify_cli_parameter(resource.subject, item)
+        buckets.setdefault(key, {"added": set(), "removed": set()})["added"].add(item)
+
+    for item in resource.removed:
+        key = _classify_cli_parameter(resource.subject, item)
+        buckets.setdefault(key, {"added": set(), "removed": set()})["removed"].add(item)
+
+    return {
+        key: _resource_diff(resource.subject, added=values["added"], removed=values["removed"])
+        for key, values in buckets.items()
+    }
+
+
+def _classify_cli_parameter(subject: Node, item: PredicateValue) -> str:
+    subject_uri = _uri_text(subject)
+    predicate_uri = _uri_text(item.predicate)
+    value_uri = _uri_text(item.value)
+    term_text = " ".join(part.lower() for part in (subject_uri, predicate_uri, value_uri) if part)
+
+    if "_interface_" in term_text or predicate_uri == f"{BOT_NAMESPACE}interfaceOf" or value_uri == f"{BOT_NAMESPACE}Interface":
+        return "interfaces"
+
+    if predicate_uri == str(SMLS_UNIT) or predicate_uri.endswith("/unit") or "qudt.org/vocab/unit/" in value_uri:
+        return "units"
+
+    if _is_geolocation_triple(subject, item):
+        return "geolocation"
+
+    if _is_wkt_triple(item):
+        return "wkt"
+
+    if _is_geometry_triple(subject, item):
+        return "geometry"
+
+    if _is_opm_level_triple(subject, item):
+        return "opm_level"
+
+    if _is_property_triple(subject, item):
+        return "building_properties"
+
+    if any(marker in term_text for marker in IFCOWL_MARKERS):
+        return "ifcowl"
+
+    if _is_building_element_triple(item):
+        return "building_elements"
+
+    if _is_hierarchical_naming_triple(subject, item):
+        return "hierarchical_naming"
+
+    if subject_uri.startswith(CANONICAL_INSTANCE_NAMESPACE) or value_uri.startswith(CANONICAL_INSTANCE_NAMESPACE):
+        return "uri_base"
+
+    return "unattributed"
+
+
+def _is_property_triple(subject: Node, item: PredicateValue) -> bool:
+    subject_uri = _uri_text(subject)
+    predicate_uri = _uri_text(item.predicate)
+    value_uri = _uri_text(item.value)
+    return (
+        subject_uri.startswith(PROPS_NAMESPACE)
+        or predicate_uri.startswith(PROPS_NAMESPACE)
+        or predicate_uri == str(SCHEMA_VALUE)
+    )
+
+
+def _is_opm_level_triple(subject: Node, item: PredicateValue) -> bool:
+    subject_uri = _uri_text(subject)
+    predicate_uri = _uri_text(item.predicate)
+    value_uri = _uri_text(item.value)
+    return (
+        subject_uri.startswith(PROPS_NAMESPACE)
+        and value_uri in {str(OWL.ObjectProperty), str(OWL.DatatypeProperty)}
+    ) or (
+        predicate_uri == str(OPM_HAS_PROPERTY_STATE)
+        or value_uri in {str(OPM_PROPERTY), str(OPM_CURRENT_PROPERTY_STATE)}
+    )
+
+
+def _is_geometry_triple(subject: Node, item: PredicateValue) -> bool:
+    subject_uri = _uri_text(subject)
+    predicate_uri = _uri_text(item.predicate)
+    value_uri = _uri_text(item.value)
+    return (
+        predicate_uri == f"{OMG_NAMESPACE}hasGeometry"
+        or predicate_uri.startswith(FOG_NAMESPACE)
+        or predicate_uri.startswith(LBD_NAMESPACE + "asMTL")
+        or predicate_uri == f"{LBD_NAMESPACE}hasBoundingBox"
+        or value_uri == f"{GEO_NAMESPACE}Geometry"
+        or subject_uri.endswith("_geometry")
+        or subject_uri.endswith("_geometry_bb")
+    )
+
+
+def _is_wkt_triple(item: PredicateValue) -> bool:
+    predicate_uri = _uri_text(item.predicate)
+    datatype_uri = str(item.value.datatype) if isinstance(item.value, Literal) and item.value.datatype else ""
+    return predicate_uri in {f"{GEO_NAMESPACE}asWKT", f"{OMG_NAMESPACE}asWKT"} or datatype_uri == f"{GEO_NAMESPACE}wktLiteral"
+
+
+def _is_geolocation_triple(subject: Node, item: PredicateValue) -> bool:
+    predicate_uri = _uri_text(item.predicate)
+    value = item.value
+    if predicate_uri == f"{GEO_NAMESPACE}hasGeometry" or _uri_text(value) == f"{GEO_NAMESPACE}Feature":
+        return True
+    if predicate_uri == f"{GEO_NAMESPACE}asWKT" and isinstance(value, Literal):
+        return str(value).lstrip().upper().startswith("POINT")
+    return _uri_text(subject).endswith("_site_geometry")
+
+
+def _is_building_element_triple(item: PredicateValue) -> bool:
+    predicate_uri = _uri_text(item.predicate)
+    value_uri = _uri_text(item.value)
+    return predicate_uri.startswith(BOT_NAMESPACE) or value_uri.startswith(BOT_NAMESPACE)
+
+
+def _is_hierarchical_naming_triple(subject: Node, item: PredicateValue) -> bool:
+    subject_uri = _uri_text(subject)
+    value_uri = _uri_text(item.value)
+    return (
+        subject_uri.startswith(CANONICAL_INSTANCE_NAMESPACE)
+        and "/" in subject_uri.removeprefix(CANONICAL_INSTANCE_NAMESPACE)
+    ) or (
+        value_uri.startswith(CANONICAL_INSTANCE_NAMESPACE)
+        and "/" in value_uri.removeprefix(CANONICAL_INSTANCE_NAMESPACE)
+    )
+
+
+def _uri_text(term: Node) -> str:
+    return str(term) if isinstance(term, URIRef) else ""

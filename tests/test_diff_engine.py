@@ -2,7 +2,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from lbd_diff.diff_engine import diff_turtle_files
+from lbd_diff.diff_engine import diff_turtle_files, group_differences_by_cli_parameter
 
 
 class DiffEngineTest(unittest.TestCase):
@@ -371,6 +371,117 @@ ex:Height_wall a opm:Property ;
 
         self.assertTrue(diff.has_changes)
         self.assertEqual(1, len(diff.changed_resources))
+
+    def test_groups_property_differences_by_cli_parameter(self) -> None:
+        with TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            first = tmp_path / "first.ttl"
+            second = tmp_path / "second.ttl"
+
+            first.write_text(
+                """
+@prefix ex: <https://example.org/> .
+@prefix bot: <https://w3id.org/bot#> .
+
+ex:wall a bot:Element .
+""".strip(),
+                encoding="utf-8",
+            )
+            second.write_text(
+                """
+@prefix ex: <https://example.org/> .
+@prefix bot: <https://w3id.org/bot#> .
+@prefix props: <http://lbd.arch.rwth-aachen.de/props#> .
+
+ex:wall a bot:Element ;
+    props:Height_property_simple "3000" .
+""".strip(),
+                encoding="utf-8",
+            )
+
+            diff = diff_turtle_files(first, second)
+
+        groups = group_differences_by_cli_parameter(diff)
+
+        self.assertEqual(1, len(groups))
+        self.assertEqual(
+            "-p/--hasBuildingElementProperties",
+            groups[0].title,
+        )
+        self.assertEqual(1, len(groups[0].added_resources))
+        self.assertEqual(0, len(groups[0].changed_resources))
+
+    def test_groups_geometry_differences_by_cli_parameter(self) -> None:
+        with TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            first = tmp_path / "first.ttl"
+            second = tmp_path / "second.ttl"
+
+            first.write_text(
+                """
+@prefix ex: <https://example.org/> .
+@prefix bot: <https://w3id.org/bot#> .
+
+ex:wall a bot:Element .
+""".strip(),
+                encoding="utf-8",
+            )
+            second.write_text(
+                """
+@prefix ex: <https://example.org/> .
+@prefix bot: <https://w3id.org/bot#> .
+@prefix geo: <http://www.opengis.net/ont/geosparql#> .
+@prefix omg: <https://w3id.org/omg#> .
+
+ex:wall a bot:Element ;
+    omg:hasGeometry ex:wall_geometry .
+ex:wall_geometry a geo:Geometry .
+""".strip(),
+                encoding="utf-8",
+            )
+
+            diff = diff_turtle_files(first, second)
+
+        groups = group_differences_by_cli_parameter(diff)
+
+        self.assertEqual(1, len(groups))
+        self.assertEqual("--hasGeometry", groups[0].title)
+        self.assertEqual(2, len(groups[0].added_resources))
+        self.assertEqual(0, len(groups[0].changed_resources))
+
+    def test_parameter_split_reclassifies_one_sided_changed_resources(self) -> None:
+        with TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            first = tmp_path / "first.ttl"
+            second = tmp_path / "second.ttl"
+
+            first.write_text(
+                """
+@prefix ex: <https://example.org/> .
+@prefix props: <http://lbd.arch.rwth-aachen.de/props#> .
+
+ex:wall props:Height_property_simple "3000" .
+""".strip(),
+                encoding="utf-8",
+            )
+            second.write_text(
+                """
+@prefix ex: <https://example.org/> .
+@prefix omg: <https://w3id.org/omg#> .
+
+ex:wall omg:hasGeometry ex:wall_geometry .
+""".strip(),
+                encoding="utf-8",
+            )
+
+            diff = diff_turtle_files(first, second)
+
+        groups = {group.title: group for group in group_differences_by_cli_parameter(diff)}
+
+        self.assertEqual(1, len(groups["-p/--hasBuildingElementProperties"].removed_resources))
+        self.assertEqual(0, len(groups["-p/--hasBuildingElementProperties"].changed_resources))
+        self.assertEqual(1, len(groups["--hasGeometry"].added_resources))
+        self.assertEqual(0, len(groups["--hasGeometry"].changed_resources))
 
 
 if __name__ == "__main__":

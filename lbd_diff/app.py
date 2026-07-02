@@ -7,7 +7,14 @@ from tkinter import filedialog, messagebox, ttk
 
 from rdflib import Graph
 
-from .diff_engine import ModelDiff, diff_graphs, format_term, load_turtle, predicate_value_text
+from .diff_engine import (
+    ModelDiff,
+    diff_graphs,
+    format_term,
+    group_differences_by_cli_parameter,
+    load_turtle,
+    predicate_value_text,
+)
 
 
 class LbdDiffApp(tk.Tk):
@@ -135,9 +142,17 @@ class LbdDiffApp(tk.Tk):
         self.tree.insert(root, "end", text=f"First graph triples: {diff.first_triple_count}", values=("",))
         self.tree.insert(root, "end", text=f"Second graph triples: {diff.second_triple_count}", values=("",))
 
-        self._insert_resource_group(root, "Added resources", diff.added_resources, "added")
-        self._insert_resource_group(root, "Removed resources", diff.removed_resources, "removed")
-        self._insert_resource_group(root, "Changed resources", diff.changed_resources, "changed")
+        for parameter_group in group_differences_by_cli_parameter(diff):
+            group = self.tree.insert(
+                root,
+                "end",
+                text=parameter_group.title,
+                values=(parameter_group.resource_count,),
+                open=True,
+            )
+            self._insert_resource_group(group, "Added resources", parameter_group.added_resources, "added")
+            self._insert_resource_group(group, "Removed resources", parameter_group.removed_resources, "removed")
+            self._insert_resource_group(group, "Changed resources", parameter_group.changed_resources, "changed")
 
         if diff.has_changes:
             self.status.set(
@@ -150,6 +165,9 @@ class LbdDiffApp(tk.Tk):
             self.status.set("The two RDF graphs contain the same triples.")
 
     def _insert_resource_group(self, parent: str, title: str, resources: tuple, mode: str) -> None:
+        if not resources:
+            return
+
         group = self.tree.insert(parent, "end", text=title, values=(len(resources),), open=True)
         for resource in resources:
             text = format_term(resource.subject, self._second_graph if mode == "added" else self._first_graph)
@@ -184,4 +202,3 @@ class LbdDiffApp(tk.Tk):
 def main() -> None:
     app = LbdDiffApp()
     app.mainloop()
-
